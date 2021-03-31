@@ -1,0 +1,311 @@
+---
+title: "NYC Taxi Data Characterization and Prediction using Machine Learning Methods"
+author: "Yanlin Qi"
+date: "3/12/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE,message=FALSE, warning=FALSE,
+                      fig.align='center')
+
+if (!require("tidyverse")) install.packages("tidyverse");library(tidyverse)
+if (!require("ggplot2")) install.packages("ggplot2");library(ggplot2)
+if (!require("data.table")) install.packages("data.table");library(data.table)
+if (!require("lubridate")) install.packages("lubridate");library(lubridate)
+if (!require("knitr")) install.packages("knitr");library(knitr)
+
+if (!require("sf")) install.packages("sf");library(sf)
+if (!require("stats")) install.packages("stats");library(stats)
+if (!require("leaflet")) install.packages("leaflet");library(leaflet)
+if (!require("gridExtra")) install.packages("gridExtra");library(gridExtra)
+if (!require("grid")) install.packages("grid");library(grid)
+if (!require("png")) install.packages("png");library(png)
+if (!require("readr")) install.packages("readr");library(readr)
+
+Sys.setlocale("LC_TIME","English")
+
+```
+
+## Introduction
+
+The dataset used in the project include 2016 Green Taxi Trip Data (.csv) which is available from <https://data.cityofnewyork.us/Transportation/2016-Green-Taxi-Trip-Data/hvrh-b6nb)>.
+
+The main topic of this report is the exploration of mobility patterns of NYC taxi rides using spatial clustering method. Specific motivation, methodology and modeling results are discussed separately in the rest of the report.
+
+## Topic: Exploration of mobility patterns of NYC taxi rides using spatial clustering
+
+### Introduction
+
+Data mining in the spatial aspects may provide useful insights into the urban mobility analysis. In the third part, the core motivation of this work is to detect the hot-spot regions of taxi rides and explore the travel mobility patterns in New York City based on the NYC open dataset regarding taxi trips. Typically, spatial clustering by K-Means is utilized to partition the geographical coordinates of the pick-up and drop-off locations of taxi trips into clusters as regions, to formalize locational similarity of these spatial objects.
+
+### Data Sources
+
+#### Taxi Trips
+
+The dataset <font color=blue>2016_Green_Taxi_Trip_Data.csv</font> continues to be used in this part. The features regarding the taxi trips including the pick-up and drop-off locations, trip distances and passenger count are mainly involved in the analysis. The time period of the taxi trips covers from 01/01/2016 00:00:00 to 01/02/2016 00:00:00, which corresponds to a whole four-week period in January. In the analysis of morning-rush-hour travel patterns in this report, taxi trips generated during the morning rush hours ranging from 6-10 am on weekdays of these four weeks are extracted to prepare for further analysis.
+
+#### NYC Neighborhoods
+
+To involve the K-Means method in spatial clustering, the pre-definition of the initial cluster centers or the number of clusters is crucial. Unfortunately, it can be highly difficult to reasonably define the initial conditions for such a large dataset that we used. However, from our prior knowledge, similar trips are more likely to be generated in the same neighborhood due to the community effect. This kind of effects can also be seen in many other aspects such as housing prices, income levels, car ownership, transport mode choices and many others. In this work, we collected the NYC neighborhood data which are publically available from <https://www1.nyc.gov/site/planning/data-maps/open-data/dwn-nynta.page>, and extracted the centroids of neighborhood regions to be the initial clustering centers. The visualization of the neighborhood distribution is shown in Figure 3.1.
+
+```{r neighbor, echo=FALSE, warning=FALSE, message=FALSE, fig.align='center', fig.cap="Figure 3.1 NYC neighborhood Distribution"}
+neighborhood <- read_sf("Data/NYC_neighborhood/geo_export_19272ca9-c335-4aad-9f0e-b412d69a3c56.shp")
+neighborhood <- st_make_valid(st_transform(neighborhood, crs = 4326))
+ggplot() + geom_sf(data=neighborhood,col="black",fill=NA, lwd=0.2)+
+  labs( title = waiver(),
+        subtitle = waiver(),
+        caption =waiver(),
+        tag = waiver(),
+        x = "Longitude",
+        y = "Latitude"
+  ) 
+```
+### Methodology
+
+#### K-Means Algorithm
+
+The steps of the K-Means algorithm are as follows:
+
+1. Select the initial K samples as the initial clustering center $a=a_1, a_2, ..., a_k$;
+
+2. For each sample $x_i$ in the dataset, compute the distance from $x_i$ to the K clustering centers, and assign each sample $x_i$ into the cluster corresponding to the clustering center nearest to $x_i$;
+
+3. For each cluster $a_j$, recalculate its clustering center $a_{j}=\frac{1}{\left | c_i \right |}\sum_{x\in c_i}^{}x$ (that is, the centroid of all samples belonging to the cluster);
+
+4. Repeat the above two steps until a certain stop condition (iteration number, minimum error change, etc.) is reached.
+
+The K-Means algorithm is only applied to applications under the Euclidean distance metric, which fits the spatial clustering in this work well. The initial condition for K-Means clustering is  given by the geographical coordinates of the NYC neighborhood centroids.
+
+### Data Analysis and Discussion
+
+#### Data Cleaning and Pre-processing
+
+To eliminate the noises from the raw data, several cleaning transformations have been conducted:
+
+  * The taxi trips should be generated within the spatial coverage of NYC. (The coordinates of pick-ups and drop-offs should within x_lim = c(-74.25, -73.75) and y_lim =c(40.5, 40.95)).
+  
+  * The passenger count of each taxi should be no more than four(Passenger_count < 5).
+  
+  * The trip-duration time should be more than 0 seconds. (The pick-up and drop-off time in local time format is transformed to the standard time format and the trip-duration time is mutated and checked)
+  
+  * The hour and weekday information of pick-up and drop-off time for each trip are extracted for further exploration in travel mobility during rush hours.
+  
+  * Each taxi trips are separated as pick-up spatial points and drop-off spatial points for further manipulation.
+  
+The NYC neighborhood data are represented as polygons in the shapefile format. The coordinates of the centroid of each neighborhood region are extracted using spatial processing and organized in spatial point format. The map of neighborhood centroid distribution is shown in Figure 3.2.
+
+```{r cleaning, echo=FALSE, warning=FALSE, message=FALSE}
+#****************************************************
+# read the first 1500000 rows which cover more than two-month trips 
+raw_trips <- read.csv("Data/2016_Green_Taxi_Trip_Data.csv", nrows = 1500000)
+raw_copy <- raw_trips
+raw_trips$lpep_pickup_datetime <- strptime(raw_trips$lpep_pickup_datetime,"%m/%d/%Y %I:%M:%S %p")
+raw_trips$Lpep_dropoff_datetime <- strptime(raw_trips$Lpep_dropoff_datetime,"%m/%d/%Y %I:%M:%S %p")
+raw_trips <- raw_trips%>%
+  mutate(trip_duration=difftime(Lpep_dropoff_datetime, lpep_pickup_datetime, units = "secs"),
+         pickup_hr=unclass(as.POSIXlt(lpep_pickup_datetime))$hour,
+         pickup_wday=unclass(as.POSIXlt(lpep_pickup_datetime))$wday,
+         dropoff_hr=unclass(as.POSIXlt(Lpep_dropoff_datetime))$hour,
+         dropoff_wday=unclass(as.POSIXlt(Lpep_dropoff_datetime))$wday
+         )
+raw_trips <- raw_trips%>%select(-c("PULocationID","DOLocationID","Ehail_fee","Store_and_fwd_flag","RateCodeID"))
+
+#****************************************************
+#*data pre-processing
+# transform time format of 01/02/2016 08:33:59 AM" to standard 24-hour time format
+taxi_trips <- raw_trips
+# only select trips generated from 2016-01-04 (MON of 1st week) to 2016-01-31 (SUN of the 4th week)
+taxi_trips <- taxi_trips%>% 
+  filter(taxi_trips$lpep_pickup_datetime >= "2016-01-04 00:00:00 CST" &
+                   taxi_trips$lpep_pickup_datetime < "2016-02-01 00:00:00 CST")
+
+# Remove rides with false trips
+taxi_trips <- taxi_trips%>% filter (trip_duration > 0 & 
+                                      Passenger_count < 4 &Trip_distance > 0)
+
+# Remove rides to and from far away areas
+xy_lim = c(-74.25, -73.75, 40.5, 40.95)
+taxi_trips <- taxi_trips%>%
+  filter(between(Pickup_longitude, xy_lim[1], xy_lim[2]))%>%
+  filter(between(Pickup_latitude, xy_lim[3], xy_lim[4]))%>%
+  filter(between(Dropoff_longitude, xy_lim[1], xy_lim[2]))%>%
+  filter(between(Dropoff_latitude, xy_lim[3], xy_lim[4]))
+
+#********************************************************************************************
+#*generate spatial data frames
+# generate pickup spatial data.frame
+pickup_sf <- st_as_sf(taxi_trips, coords = c("Pickup_longitude", "Pickup_latitude"))
+pickup_sf <- st_set_crs(pickup_sf, 4326)
+# pickup_sf <- st_cast(st_crop(st_union(pickup_sf), st_union(neighborhood)), "POINT")
+
+# generate drop-off spatial data.frame
+dropoff_sf <- st_as_sf(taxi_trips, coords =  c("Dropoff_longitude", "Dropoff_latitude"))
+dropoff_sf <- st_set_crs(dropoff_sf, 4326)
+# dropoff_sf <- st_cast(st_crop(st_union(dropoff_sf), st_union(neighborhood)), "POINT")
+
+# generate spatial data.frame of taxi stops
+pickup_sf <- pickup_sf%>%select(!c("Dropoff_longitude", "Dropoff_latitude"))
+dropoff_sf <- dropoff_sf%>%select(!c("Pickup_longitude", "Pickup_latitude"))
+
+parking_sf <- rbind(pickup_sf, dropoff_sf)
+```
+
+```{r neighbor_centroid, echo=FALSE, warning=FALSE, message=FALSE, fig.align='center', fig.cap="Figure 3.2 Map of NYC neighborhood centroids"}
+ggplot() + geom_sf(data=st_centroid(neighborhood), col="blue")+geom_sf(data=neighborhood,col="black",fill=NA, lwd=0.1)+
+  labs( title = waiver(),
+        subtitle = waiver(),
+        caption =waiver(),
+        tag = waiver(),
+        x = "Longitude",
+        y = "Latitude"
+  ) 
+```
+
+#### Spatial Distribution of Pick-up Locations and Drop-off Locations
+
+Before the spatial clustering, the spatial distribution of spatial points of Pick-up locations and drop-off Locations are pre-checked, which are shown in Figure 3.3 and Figure 3.4. 
+
+<font color=gray>Considering the fact that it is time-consuming to plot Figure 3.3-3.5 in generating HTML, we use images output by the scripts instead of plotting the 1.2 million points every time when we want to knit the rmd</font>
+
+```{r pick_up_distribution, echo=FALSE, warning=FALSE, message=FALSE, fig.align='center', fig.cap="Figure 3.3 Distribution of pick-up locations of taxi rides", error=FALSE, cache.comments=FALSE, fig.align='center'}
+
+img1 <-  rasterGrob(as.raster(readPNG("Graphs/pick_up_distribution.png")),width=unit(1, "npc"), height=unit(1, "npc"), interpolate = FALSE)
+grid.arrange(img1, ncol = 1)
+```
+
+```{r drop_off_distribution, echo=FALSE, warning=FALSE, message=FALSE, fig.align='center', fig.cap="Figure 3.4 Distribution of drop-off locations of taxi rides", error=FALSE, cache.comments=FALSE, fig.align='center'}
+
+img2 <-  rasterGrob(as.raster(readPNG("Graphs/drop_off_distribution.png")),width=unit(1, "npc"), height=unit(1, "npc"), interpolate = FALSE)
+grid.arrange(img2, ncol = 1)
+```
+
+From the distribution map of pick-up locations, it can be observed that there are no pick-up rides within the Manhattan island. This is due to the operating restriction of green taxes which are only permitted to accept street-hails in the Hail Exclusionary Zone, south of West 110th St and East 96th St. Based on the unbalance of pick-up rides and drop-off rides within the Manhattan island, we would separate the pick-up locations and drop-off locations and only involve the pick-up data to explore the spatial variations within the Manhattan island.
+
+#### Detection of Hot-spot Regions
+
+In urban areas, functional regions such as business districts, hospitals, and big communities, are often hot-spot regions featured in high-level travel demands for taxi rides. Identification and characterization of the urban hot-spot regions of taxi rides may help to discover interesting and potentially useful patterns for urban planning. To achieve this, spatial clustering based on the pick-up and drop-off locations are conducted. The centroids of NYC neighborhoods are set as the initial clustering centers. The locational similarity of taxi trips are visualized in Figure 3.5. 
+
+```{r kmeans_function, echo=FALSE, warning=FALSE, message=FALSE,error=FALSE, include=FALSE}
+
+cluster_trips <- function(stop_sf, neighbor_shp, center_quant){
+  #* Dynamic of the NYC:pick-up and drop-off together
+  #* 
+  #Select NYC neighborhood centers which contains more than 500 points as initial clustering centers
+  stop_within_flag <- st_contains(neighbor_shp, stop_sf)
+  neighbor_shp$stop_count <- map_dbl(stop_within_flag, ~length(.))
+  stop_neighborhood <- neighbor_shp[map_dbl(stop_within_flag, ~length(.))>quantile(neighbor_shp$stop_count)[center_quant],]
+
+  stop_nbrhd_centroid <- st_centroid(stop_neighborhood)
+  # prepare the data.frame data and matrix data for kmeans clustering
+  stop_nbrhd_xy <- as.matrix(st_coordinates(stop_nbrhd_centroid)[,c("X","Y")])
+  stop_xy <-  as.matrix(st_coordinates(stop_sf)[,c("X","Y")])
+  # kmeans clustering
+  stop_cluster <- kmeans(stop_xy, stop_nbrhd_xy)
+  # assign clustering result to sf
+  stop_sf$cluster_id <- stop_cluster$cluster
+  # assign center info
+  cluster_centroid <- st_set_crs(st_as_sf(as.data.frame(stop_cluster$centers), coords=c("X","Y")), 4326)
+  print(cluster_centroid)
+  cluster_centroid <- cluster_centroid %>%
+    mutate(cluster_size=stop_cluster$size, cluster_id=1:nrow(cluster_centroid)) %>% arrange(desc(cluster_size))
+  size_match <- left_join(as.data.frame(stop_sf)%>%
+                            select(cluster_id), as.data.frame(cluster_centroid)%>%
+                            select(cluster_id, cluster_size), by="cluster_id")
+  stop_sf$cluster_size <- size_match$cluster_size
+  return(list(stop_sf, cluster_centroid))
+}
+
+```
+
+
+```{r plot_functions, echo=FALSE, warning=FALSE, message=FALSE, error=FALSE}
+
+#****************************************************
+#*plot cluster centroids by leaflet map
+centroid_plot <- function(centroid_data, neighbor_shp, scale_rate, mark_col){
+  leaflet() %>% setView(lng=-73.93,lat=40.73,zoom = 12) %>%
+    addTiles()%>%
+    addPolygons(data=neighbor_shp, fill = NA,color = "black", fillOpacity = 0.2, weight = 1.5)%>%
+    addCircleMarkers(data = centroid_data, radius = centroid_data$cluster_size*scale_rate, color = mark_col)%>%
+    addCircles(data = st_centroid(neighbor_shp), color = "red", weight = 3)
+}
+#****************************************************
+```
+
+```{r parking_clusters, echo=FALSE, warning=FALSE, message=FALSE, fig.align='center', fig.cap="Figure 3.5 Distribution of taxi-ride clusters", error=FALSE, cache.comments=FALSE, fig.align='center'}
+
+img3 <-  rasterGrob(as.raster(readPNG("Graphs/standing_clusters.png")),width=unit(1, "npc"), height=unit(1, "npc"), interpolate = FALSE)
+grid.arrange(img3, ncol = 1)
+```
+
+It can be seen from Figure 3.5 that the clustering results in a partition which is somewhat similar to the way NY is divided into different neighborhoods. The areas newly split by taxi trip clusters may reflect more reasonable delimitations of neighborhood boundaries.
+
+However, it can still be difficult to identify which parts are the hot-spot regions of taxi rides (blue circles with a larger radius) as the spatial points of most clusters are densely-distributed. To visualize the different levels of taxi-trip numbers within each cluster, we use the coordinates of the cluster centers on the map to represent each cluster and circles to represent the relative cluster sizes. The radius of each circles visualized in the map only represents the *relative relationship* between different clusters. Some of the circles may overlap with others, but the clusters they represent are actually non-overlapping. We use the leaflet package and the OpenStreet base-map to visualize the cluster central locations and relative sizes, which may help to refer the clusters with land-use types in New York City. The result is shown in Figure 3.6.
+
+<style>
+.html-widget {
+    margin: auto;
+}
+</style>
+
+```{r centroid_parking, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
+#******
+parking_res <- cluster_trips(parking_sf, neighbor_shp = neighborhood, center_quant = 1)
+
+#******
+```
+
+```{r centroid_parking_plot, echo=FALSE, warning=FALSE, message=FALSE, fig.align='center', fig.cap="Figure 3.6 Centroids and relative sizes of taxi-trip clusters"}
+#******
+#*leaflet clustering centroid map
+centroid_plot(parking_res[[2]], neighborhood, scale_rate = 0.0005, mark_col = "blue")
+#******
+```
+As we can see, four regions including the Upper East of Central park, the Upper West of Brooklyn, and the Astoria and the Jackson Heights are the typical hot-spot regions of taxi rides with clusters in higher density. People in these areas may be in higher needs for taxi rides and these regions may have higher levels of travel mobility.
+
+However, the taxi rides in the Manhattan island cannot be correctly demonstrated due to the permission limitation of pick-up rides within this area. Hence, we separately involve the drop-off locations to compare the mobility level of the Manhattan island with other NYC local regions.The result is shown in Figure 3.7.
+
+```{r drop_off_centroid, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
+dropoff_res <- cluster_trips(dropoff_sf, neighbor_shp = neighborhood, center_quant = 2)
+centroid_plot(dropoff_res[[2]], neighborhood, scale_rate = 0.0008, mark_col = "darkviolet")
+```
+
+```{r drop_off_centroid_plot, echo=FALSE, warning=FALSE, message=FALSE, fig.align='center', fig.cap="Figure 3.7 Centroids and relative sizes of drop-off clusters"}
+centroid_plot(dropoff_res[[2]], neighborhood, scale_rate = 0.0008, mark_col = "darkviolet")
+```
+
+From Figure 3.7, we can see that the drop-off cluster sizes within the Manhattan island is still in relative small sizes, which is unexpectedly low considering its dense population density. This may be explained by its unique island topography and the densely-distributed subway system which make people tend to take the public transport so as to avoid heavy traffic jams.
+
+#### Exploration of Travel Mobility Mode During Morning Rush Hours
+
+To further compare the local mobility pattern over different local regions,the pick-up and drop-off locations of taxi rides during the morning rush hours from 6 am to 10 am on weekdays are extracted and clustered into different spatial groups. The cluster central locations and relative sizes are shown in Figure 3.8. The green circles and violet circles represent the pick-up clusters and drop-off clusters respectively.
+
+```{r morning_rush, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
+#********************************************************************************************
+#*Pickup during evening rush hours
+erpickup_sf <- pickup_sf%>%filter(pickup_hr %in%  c(16,17,18, 19) & pickup_wday >0 & pickup_wday < 6)
+erpickup_res <- cluster_trips(erpickup_sf, neighbor_shp = neighborhood, center_quant = 2)
+#***********************************
+#*dropoff during morning rush hours
+erdropoff_sf <- dropoff_sf%>%filter(dropoff_hr %in% c(16,17,18, 19) & dropoff_wday >0 & dropoff_wday < 6)
+
+erdropoff_res <- cluster_trips(erdropoff_sf, neighbor_shp = neighborhood, center_quant = 2)
+```
+
+```{r plot_morning_rush, echo=FALSE, warning=FALSE, message=FALSE, fig.align='center', fig.cap="Figure 3.8 Centroids and relative sizes of pick-up and drop-off clusters during morning rush hours on weekdays",cache.comments=FALSE}
+#***********************************
+#*morning rush hour together for comparison
+leaflet() %>% setView(lng=-73.93,lat=40.73,zoom = 12) %>%
+  addTiles()%>%
+  addPolygons(data=neighborhood, fill = NA,color = "black", fillOpacity = 0.2, weight = 1.5)%>%
+  addCircleMarkers(data = erpickup_res[[2]], radius = erpickup_res[[2]]$cluster_size*0.002, color = "forestgreen")%>%
+  addCircleMarkers(data = erdropoff_res[[2]], radius = erdropoff_res[[2]]$cluster_size*0.002, color = "darkviolet")%>%
+  addCircles(data = st_centroid(neighborhood), color = "red", weight = 3)
+```
+
+By comparing the distributions of pick-up and drop-off clustering centroids and clustering sizes in Figure 3.8, it can be noticed that in the regions of the Upper East of Central park and the Upper West of Brooklyn, there are significantly more pick-up rides (green circles) than drop-off rides (violet circles). As for regions with more pick-up rides than drop-off rides during the morning rush hours, it may indicate that these regions are featured in high-density districts but low-level employment opportunities and public transport infrastructures. Further explorations such as hourly visualization of pick-up and drop-off clusters of taxi rides may indicate more interesting patterns.
+
+
+

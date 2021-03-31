@@ -1,0 +1,390 @@
+---
+title: "Finding Best Primary School Locations Using Spatial Data Analysis for Dublin County, Ireland"
+author: "Yanlin Qi"
+date: "2/20/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(sf)
+library(ggplot2)
+library(tidyverse)
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Significance of Selected Topics
+
+Spatial analysis is a widely-used method to solve complex location-oriented problems by examining the locations, attributes, and relationships of spatial data features. It makes spatial data available as a source to derive new information, which potentially supports making further informed decisions. Finding the best places for urban infrastructures is always in high need for urban planning, where spatial analysis can serve as a crucial instrument by geographical data analytics. In decision-making, informed evaluations through spatial analysis enable the government to make full use of existing resources and plan for citizens' real needs.
+
+The educational infrastructure is one of the essential factors for the region's future development. The population change may lead to the need for new schools and enrollment opportunities. The project intends to determine the best multi-denominational primary school locations for Dublin County, Ireland. It is a real-life practice of vector spatial data analysis using R. Besides, the Dublin region's development inspires the need for more educational infrastructures, which include more primary schools. Therefore, the areas with relatively more urgent needs for new schools are worth being figured out, considering a series of social and transportation-related factors.
+R programming software has various bespoke packages that provide additional functionality for handling spatial data and performing complex spatial analysis operations. The R packages "tidyverse" and "sf" are the main basic tools we use to complete our data analytics.
+
+R programming software has various bespoke packages that provide additional functionality for handling spatial data and performing complex spatial analysis operations. The R packages "tidyverse" and "sf" are the main basic tools that we involved to complete our data analytics. 
+
+# Identification of Data Sources
+
+Regarding the data selection process, the data sources come from the [DATA.GOV.IE website](https://data.gov.ie/dataset). It is an open data source provided by Ireland National Government, where the public can get access to the data regarding but not limited to the economic, social, and democratic data at the county and national level. One type of data file extracted from the DATA.GOV.IE website and used in this project includes the spatial data shapefiles of the spatial map of electoral divisions and main roads in Dublin County. Furthermore, we also downloaded the demographic data that provides the population change information of each Electoral Division (ED) in Dublin county from 2002 to 2006. The school information includes their location, the number of enrollment, and their denomination status, etc.
+
+# Hypothesis and Exploratory Analysis
+
+### Hypothesis
+As mentioned earlier, the goal of the project is to determine the best new multi-denominational primary school location regions for Dublin County, Ireland.  The improvement of educational infrastructures is essential to the region's future development. Our study's hypothesis is that to satisfy the religious educational need and population growth, new religious schools need to be constructed. Our study and analysis premises include: 
+
+* Meet the increasing needs of a growing population. The new schools should be located in the EDs with higher population change.  
+* Enrollment capability of existing schools in each ED. The regions with lower enrollment capabilities have higher priority, as there may be a stronger need for new schools.  
+* Improve regional balance. The new school’s location EDs should not have existing multi-denominational primary schools.  
+* Traffic accessibility. The school locations should be convenient for students and parents to access. In other words, the distance between roads and school should be less than 2 kilometers.
+
+### Demographics in Dublin
+
+#### 1. Population
+
+In 2006, the total population in Dublin was approximately 1.2 million. The below Figure 1 presents the population changes from 1991 to 2006. We can see a significant increase in population over years, which implies a potential need for more educational institutions.
+
+```{r plot1, echo=FALSE,warning=FALSE, message=FALSE, fig.align='center', fig.cap="Figure 1: Population changes from 2002-2006 in Dublin, Ireland", warning=FALSE, message=FALSE}
+library(readr)
+library(tidyverse)
+library(sf)
+
+EDs <-read_sf("Data/DublinEDs.shp")
+# combine data
+pop1 <- sum(EDs$POP91)/1000
+pop2 <- sum(EDs$POP96)/1000
+pop3 <- sum(EDs$POP02)/1000
+pop4 <- sum(EDs$POP06)/1000
+male1 <- round(sum(EDs$MALE91)/1000)
+male2 <- round(sum(EDs$MALE96)/1000)
+male3 <- round(sum(EDs$MALE02)/1000)
+male4 <- round(sum(EDs$MALE06)/1000)
+female1 <- round(sum(EDs$FEM91)/1000)
+female2 <- round(sum(EDs$FEM96)/1000)
+female3 <- round(sum(EDs$FEM02)/1000)
+female4 <- round(sum(EDs$FEM06)/1000)
+population <- data.frame("Year"=c(1991,1996,2002,2006),"Population"=c(pop1,pop2,pop3,pop4),
+                         "Male"=c(male1,male2,male3,male4),"Female"=c(female1,female2,female3,female4))
+# population plot
+ggplot(population, aes(x=Year,y=Population))+geom_line()+geom_point(colour = "blue", size = 3)+
+  scale_x_continuous(breaks = c(1996,1991,2002,2006))+ylab("Population (thousands)")
+```
+
+Splitting the population by genders, Figure 2 shows a tendency of growth for both the female and male populations. Besides, the female population tends to be greater than the male population.
+
+```{r plot2, echo=FALSE,warning=FALSE, message=FALSE, fig.align="center",fig.cap="Figure 2: Population change from 2002-2006 among gender in Dublin, Ireland"}
+# population plot by gender
+pop.gender <- data.frame(Gender=rep(c("Male" , "Female") , 4),
+                  year=c(1991,1991,1996,1996,2002,2002,2006,2006),
+                  popu=c(male1,female1,male2,female2,male3,female3,male4,female4))
+ggplot(data=pop.gender, aes(x=year, y=popu,fill=Gender)) +
+  geom_bar(stat="identity", position=position_dodge())+labs(x="Year",y="Population (thousands)")+
+  scale_x_continuous(breaks = c(1996,1991,2002,2006))+
+  geom_text(aes(label=popu), position=position_dodge(width=3.5), vjust=-0.25)
+```
+
+#### 2. Age
+
+Figure 3 shows the age distribution in Dublin. Most populations aged between 20-29. Children aged between 10 and 15 have a population of 73,000, indicating that schools need to satisfy the needs of such a population.
+```{r plot3, fig.align="center",fig.cap="Figure 3: Age distribution in Dublin, Ireland", fig.align='center', echo=FALSE,warning=FALSE, message=FALSE}
+# combine data
+a1014 <- sum(EDs$AGE1014)
+a1519 <- sum(EDs$AGE1519)
+a2029 <- sum(EDs$AGE2024)+sum(EDs$AGE2529)
+a3039 <- sum(EDs$AGE3034)+sum(EDs$AGE3539)
+a4049 <- sum(EDs$AGE4044)+sum(EDs$AGE4549)
+a5059 <- sum(EDs$AGE5054)+sum(EDs$AGE5559)
+a6069 <- sum(EDs$AGE6064)+sum(EDs$AGE6569)
+a7079 <- sum(EDs$AGE7074)+sum(EDs$AGE7579)
+a80 <- sum(EDs$AGE8084)+sum(EDs$AGE85PL)
+age <- data.frame("Age"=c("10-14","15-19","20-29","30-39","40-49","50-59","60-69","70-79","80+"),
+                  "Frequency"=c(a1014,a1519,a2029,a3039,a4049,a5059,a6069,a7079,a80))
+ggplot(age,aes(x=Age,y=Frequency))+geom_bar(fill="deepskyblue4",stat = "identity")+
+  labs(x="Age",y="Frequency")
+```
+
+#### 3. Denominations
+
+Figure 4 illustrates the distribution of religious groups in Dublin County,  Ireland. We can notice from the figure that over 90% of people in Dublin county are Catholics, which means there is a need for new multi-denominational schools in the county.
+```{r plot4,  echo=FALSE,warning=FALSE, message=FALSE, fig.align="center",fig.cap="Figure 4: Religion Distribution in Dublin, Ireland"}
+schools <- read_csv("Data/Dublin_PrimarySchools.csv")
+relig <- schools %>% select(DENOMINATI) %>% group_by(DENOMINATI) %>% summarize(relig.count=n())
+ggplot(relig,aes(x=reorder(DENOMINATI,relig.count),y=relig.count))+geom_bar(fill="deepskyblue4",stat = "identity")+
+  coord_flip()+ labs(x="Religion",y="Frequency")
+```
+
+# Spatial Data Analysis
+
+### Raw Data Distribution
+
+To find the location selection for new multi-denominational primary schools, we will evaluate the topological relations between different spatial objects including electoral divisions (EDs), main roads, and existing primary schools. The spatial distribution map of them is shown in Figure 5. To assess the enrollment needs for new multi-denominational primary schools, manipulations on the attributes of these spatial data will also be done to obtain quantitative indicators of need levels for new primary schools.
+
+```{r spatial location, fig.align='center', echo=FALSE,warning=FALSE, message=FALSE}
+#***********************
+# read ed shape and calculate pop_change
+dublin_eds<-read_sf('Data/DublinEDs.shp')
+dublin_eds$pop_change <- dublin_eds$POP06 - dublin_eds$POP02
+#***********************
+# read school information and transform csv to spatial data.frame
+schools <- read.csv("Data/Dublin_PrimarySchools.csv")
+sf_schools <- st_as_sf(schools, coords = c("EASTING_", "NORTHING"))
+#***********************
+# read road shp
+dublin_roads<-read_sf("Data/DublinRoads.shp")
+#***********************
+#*plot raw spatial data distribution map
+ggplot()+geom_sf(data = dublin_eds, fill="white") +
+  geom_sf(data = sf_schools, aes(lty="Primary School"), cex=0.5) +
+  geom_sf(data = dublin_roads, aes(color="Main Roads")) +
+  theme(axis.text.x=element_text(angle=90, vjust = 0.5, hjust=1))+
+  labs( title = waiver(),
+        subtitle = waiver(),
+        caption ="Figure 5: Map of EDs, mainroads and school locations in Dublin",
+        tag = waiver(),
+        x = "Longitude",
+        y = "Latitude"
+  )
+
+```
+
+### Population Change of Individual EDs
+
+Population growth can lead to increasing demands for educational resources. Hence, the population change over the given period from 2002 to 2006 is considered to be the influential factors for evaluating enrollment needs of each ED. The spatial distribution of population change of individual EDs between 2002 and 2006 is shown in Figure 6.
+
+```{r pop_change map, fig.align='center', echo=FALSE,warning=FALSE, message=FALSE}
+#***********************
+#*plot pop change map
+ggplot()+geom_sf(data = dublin_eds, aes(fill=pop_change)) +
+  scale_fill_continuous(name="POP_change", low = "navy",high = "cyan")+
+  theme(axis.text.x=element_text(angle=90, vjust = 0.5, hjust=1))+
+  geom_sf(data = dublin_roads, color="green") +
+  labs( title = waiver(),
+        subtitle = waiver(),
+        caption = "Figure 6: Map of population change from 2002 to 2006 in Dublin",
+        tag = waiver(),
+        x = "Longitude",
+        y = "Latitude"
+  )
+#***********************
+```
+
+From Figure 6, it can be observed that there has been a significant growth in population for some EDs over the 4-year period, which potentially indicates a higher population of pupils demanding more educational resources like new primary schools and larger enrollment quotas.
+
+### Enrollment Supply of Existing Schools
+
+The selected location for building new primary schools should also prioritize the needs of EDs currently with lower enrollment quotas to avoid unnecessary and superfluous investment. Here, we summarized the total enrollment supply numbers from all schools within the same EDs to evaluate the capability of enrollment supply of each ED. This is achieved by an intersection of schools' locations and the spatial coverage of each ED as well as a following summary of schools' enrollment within the same ED. The enrollment supply numbers of individual schools in Dublin are visualized in Figure 7. 
+
+```{r Enrollment supply map, fig.align='center', echo=FALSE,warning=FALSE, message=FALSE}
+#***********************
+#*plot enrollment supply of individual schools
+ggplot()+geom_sf(data = dublin_eds, fill="white") +
+  geom_sf(data = sf_schools, aes(colour=ENROLLMENT), cex=1) +
+  scale_color_continuous(name="Enrollment Supply", low = "cyan",high = "orangered")+
+  geom_sf(data = dublin_roads, color="green") +
+  theme(axis.text.x=element_text(angle=90, vjust = 0.5, hjust=1))+
+  labs( title = waiver(),
+        subtitle = waiver(),
+        caption = "Figure7: Map of Enrollment supply of individual schools in Dublin",
+        tag = waiver(),
+        x = "Longitude",
+        y = "Latitude"
+  )
+```
+
+The calculated enrollment supply at ED level is shown in Figure 8.
+
+```{r Enrollment supply ED, fig.align='center', echo=FALSE,warning=FALSE, message=FALSE}
+#***********************
+#* calculate sum of enrollments within each ED
+get_ed_enrollment <- function(x, spare_mtx){
+  num__students <- c()
+  for (i in 1:length(spare_mtx)){
+    if (!is_empty(spare_mtx[[i]])){
+      num__students[i] <- sum(x[spare_mtx[[i]],]$ENROLLMENT)
+    }else{
+      num__students[i] <- 0
+    }
+  }
+  return(num__students)
+}
+
+# calculate enrollment supply for each ed
+spare_mtx_enroll <- st_intersects(dublin_eds, sf_schools)
+dublin_eds$num_enrollment <- get_ed_enrollment(sf_schools, spare_mtx_enroll)
+#***********************
+#*plot county enrollment supply
+ggplot()+geom_sf(data = dublin_eds, aes(fill=num_enrollment)) +
+  scale_fill_continuous(name="Enrollment Supply", low = "olivedrab",high = "yellow")+
+  geom_sf(data = dublin_roads, color="green") +
+  theme(axis.text.x=element_text(angle=90, vjust = 0.5, hjust=1))+
+  labs( title = waiver(),
+        subtitle = waiver(),
+        caption = "Figure 8: Map of enrollment supply of EDs in Dublin",
+        tag = waiver(),
+        x = "Longitude",
+        y = "Latitude"
+  )
+#***********************
+```
+
+In Figure 8, the spatial distribution of enrollment supply varies over different EDs, and a higher enrollment supply number represents a higher level of enrollment capability and perhaps a lower needs for new schools. However, we need to further investigate the overall influences of population growth and enrollment supply.
+
+### Enrollment Need of EDs
+
+To combine the influence of population change and enrollment supply, we introduce the enrollment needs of each ED. The enrollment need is defined by the multiplication of population in year 2006 and the decreased enrollment supply per capita from 2002 to 2006 which is represented by 
+
+\begin{gather*}
+Enrollment\_need=(\frac{Enrollment\_supply}{POP02}-\frac{Enrollment\_supply}{POP06})\times POP06
+\end{gather*}
+
+where the Enrollment_need represents the level of enrollment supply capability of each ED; POP02 and POP06 represents the population in 2002 and 2006 respectively.
+
+The feasible explanation of the enrollment need is that, we assume the newly-built primary schools should let each person in 2006 didn't lose any quota of enrollment opportunities caused by population growth compared with 2002. The enrollment need is the opposite number of the enrollment opportunity decrease and similar to compensation variation of enrollment supply. The enrollment needs of individual EDs based on calculation are shown in Figure 9.
+
+```{r Enrollment supply need ED, fig.align='center', echo=FALSE,warning=FALSE, message=FALSE}
+#***********************
+#*calculate ed enrollment needs
+dublin_eds$enroll_needs <- (dublin_eds$num_enrollment/dublin_eds$POP02-
+                              dublin_eds$num_enrollment/dublin_eds$POP06)*dublin_eds$POP06
+dublin_eds_for_enroll <- dublin_eds%>%filter(enroll_needs>0)%>%arrange(desc(enroll_needs))
+#***********************
+#* plot ed enrollment needs
+ggplot()+geom_sf(data = dublin_eds, fill="white") +
+  geom_sf(data = dublin_eds_for_enroll, aes(fill=enroll_needs)) +
+  scale_fill_continuous(name="Enrollment Need", low = "cyan",high = "orangered")+
+  geom_sf(data = dublin_roads, color="green") +
+  theme(axis.text.x=element_text(angle=90, vjust = 0.5, hjust=1))+
+  labs( title = waiver(),
+        subtitle = waiver(),
+        caption ="Figure 9: Map of enrollment needs of EDs in Dublin",
+        tag = waiver(),
+        x = "Longitude",
+        y = "Latitude"
+  )
+#***********************
+```
+
+### Elimination of EDs with Multi-Denominational Schools
+To keep regional balance of educational resource, we should eliminate the EDs already with existing multi-denominational schools and prioritize the needs for EDs without such kind of primary schools. An attribute filtering processing was done to meet this premise. THe result is visualized as Figure 10.
+
+```{r ED no multi denomi, fig.align='center', echo=FALSE,warning=FALSE, message=FALSE}
+#***********************
+#*get the ed attribute of each school
+get_school_ed <- function(x, spare_mtx){
+  school_ed <- c()
+  for (i in 1:length(spare_mtx)){
+    if (!is_empty(spare_mtx[[i]])){
+      school_ed[i] <- x[spare_mtx[[i]],]$DED_NAME
+    }else{
+      school_ed[i] <- NA
+    }
+  }
+  return(school_ed)
+}
+#*******************************
+#*filter eds without "MULTI DENOMINATIONAL"
+spare_mtx_school_ed <- st_intersects(sf_schools, dublin_eds_for_enroll)
+sf_schools$ed_name <- get_school_ed(dublin_eds_for_enroll, spare_mtx_school_ed)
+
+sf_schools_nomulti <- sf_schools%>%filter(DENOMINATI!="MULTI DENOMINATIONAL")
+dublin_eds_for_enroll_no_multi <-dublin_eds_for_enroll%>%filter(DED_NAME%in%sf_schools_nomulti$ed_name)
+
+#*******************************
+#*plot eds without multi-denominational schools
+ggplot()+geom_sf(data = dublin_eds, fill="white") +
+  geom_sf(data = dublin_eds_for_enroll_no_multi, aes(fill=enroll_needs)) +
+  scale_fill_continuous(name="Enrollment Need", low = "cyan",high = "orangered")+
+  geom_sf(data = dublin_roads, color="green") +
+  theme(axis.text.x=element_text(angle=90, vjust = 0.5, hjust=1))+
+  labs( title =  waiver(),
+        subtitle = waiver(),
+        caption = "Figure 10: Map of enrollment need of EDs without multi_denominational schools",
+        tag = waiver(),
+        x = "Longitude",
+        y = "Latitude"
+  )
+#*******************************
+```
+
+### Traffic Accessibility
+
+To make the travel of pupils and parents convenient convenient, we meet the traffic accessibility premise by selecting the new school locations within the 2-km buffer of main roads in Dublin. The generated buffer of the main roads is shown in Figure 11.
+
+```{r buffer of roads, fig.align='center', echo=FALSE,warning=FALSE, message=FALSE}
+#*******************************
+# calculate roads' buffer
+roads_buf <- st_union(st_buffer(dublin_roads,dist=2000))
+#*******************************
+#* calculate intersection of road buffer and dublin_eds_for_enroll_no_multi
+dublin_eds_for_enroll_no_multi_buffer <- st_intersection(dublin_eds_for_enroll_no_multi, roads_buf)
+#*******************************
+#*plot road buffer
+ggplot()+geom_sf(data = dublin_eds, fill="white") +
+  geom_sf(data = dublin_eds_for_enroll_no_multi, aes(fill=enroll_needs)) +
+  scale_fill_continuous(name="Enrollment Need", low = "cyan",high = "orangered")+
+  geom_sf(data = dublin_roads, color="green") +
+  geom_sf(data = roads_buf, fill=alpha("green", alpha = 0.5), lwd=0.2)+
+  theme(axis.text.x=element_text(angle=90, vjust = 0.5, hjust=1))+
+  labs( title = waiver(),
+        subtitle = waiver(),
+        caption =  "Figrue 11: Map of enrollment need of EDs without multi_denominational schools",
+        tag = waiver(),
+        x = "Longitude",
+        y = "Latitude"
+  )
+#*******************************
+```
+
+Then we use the buffer layer to crop the enrollment need map generated by the previous step-Elimination of EDs with Multi-Denominational Schools. The regions intersected with the road buffer are visualized in Figure 12.
+
+```{r buffer crop, fig.align='center', echo=FALSE,warning=FALSE, message=FALSE}
+#*******************************
+final_eds_for_school <- dublin_eds_for_enroll_no_multi_buffer
+ggplot()+geom_sf(data = dublin_eds, fill="white") +
+  geom_sf(data = final_eds_for_school, aes(fill=enroll_needs)) +
+  scale_fill_continuous(name="Enrollment Need", low = "cyan",high = "orangered")+
+  geom_sf(data = dublin_roads, color="green")+
+  geom_sf(data = roads_buf, fill=alpha("green", alpha = 0.05), lwd=0.2)+
+  theme(axis.text.x=element_text(angle=90,vjust = 0.5, hjust=1))+
+  labs( title = waiver(),
+        subtitle = waiver(),
+        caption = "Figure 12: Map of candidate regions for new nulti-denominational schools",
+        tag = waiver(),
+        x = "Longitude",
+        y = "Latitude"
+  )
+
+#*******************************
+```
+
+After the spatial cropping processing, only part regions of the EDs near the main roads are remained. The color of the remained regions represents the level of enrollment needs for supporting final decisions of school-location selection.
+
+### Top-3 Candidate Regions for New Multi-Denominational Schools
+
+We choose the leading-three regions with highest enrollment needs to be the final candiate locations for building a new multi-denominational school. The result is visualized in Figure 13.
+
+```{r plot top3, fig.align='center', echo=FALSE,warning=FALSE, message=FALSE}
+#*******************************
+#*plot top3_locations
+final__topeds_for_school <- dublin_eds_for_enroll_no_multi_buffer%>%arrange(desc(enroll_needs))
+final__top3eds_for_school <- final__topeds_for_school[1:3,]
+ggplot()+geom_sf(data = dublin_eds, fill="white") +
+  geom_sf(data = final__top3eds_for_school, aes(fill=enroll_needs)) +
+  scale_fill_continuous(name="Enrollment Need", low = "cyan",high = "orangered")+
+  geom_sf(data = dublin_roads, color="green")+
+  geom_sf(data = sf_schools, color="blue", cex=0.1) +
+  theme(axis.text.x=element_text(angle=90,vjust = 0.5, hjust=1))+
+  labs( title = waiver(),
+        subtitle = waiver(),
+        caption = "Figure 13: Map of top-3 regions for new nulti-denominational schools",
+        tag = waiver(),
+        x = "Longitude",
+        y = "Latitude"
+  )
+#*******************************
+```
+
+# Conclusions
+
+In this project, we used spatial analysis to find the top-3 candidate locations for building new multi-denominational schools. The topological relations and enrollment needs are evaluated to achieve the final output based on the collected spatial spatial data and demographics. Further processing such as proposing more reasonable premises and involving more data may be beneficial to reduce the scope of candidate locations.
+
+
+
+
